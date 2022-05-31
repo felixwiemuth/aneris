@@ -117,17 +117,22 @@ Section fairness.
     ls_under:> M.(fmstate);
 
     ls_fuel: gmap M.(fmrole) nat;
-    ls_fuel_dom: dom ls_fuel = M.(live_roles) ls_under;
+    ls_fuel_dom: M.(live_roles) ls_under ⊆ dom ls_fuel;
 
     ls_mapping: gmap M.(fmrole) (locale Λ); (* maps roles to thread id *)
-    ls_mapping_dom: dom ls_mapping = M.(live_roles) ls_under;
+
+    ls_same_doms: dom ls_mapping = dom ls_fuel;
   }.
 
   Arguments ls_under {_}.
   Arguments ls_fuel {_}.
   Arguments ls_fuel_dom {_}.
   Arguments ls_mapping {_}.
-  Arguments ls_mapping_dom {_}.
+  Arguments ls_same_doms {_}.
+
+  Lemma ls_mapping_dom M (m: LiveState M):
+    M.(live_roles) m.(ls_under) ⊆ dom m.(ls_mapping).
+  Proof. rewrite ls_same_doms. apply ls_fuel_dom. Qed.
 
   Inductive FairLabel {Roles} :=
   | Take_step: Roles -> locale Λ -> FairLabel
@@ -168,12 +173,14 @@ Section fairness.
   Qed.
 
   Definition fuel_decr {M: FairModel} (tid: olocale Λ) (oρ: option M.(fmrole)) (a b: LiveState M) :=
-    forall ρ', ρ' ∈ M.(live_roles) a.(ls_under) ->
+    forall ρ', ρ' ∈ dom $ a.(ls_fuel) ->
           must_decrease ρ' oρ a b tid
           -> oless (b.(ls_fuel) !! ρ') (a.(ls_fuel) !! ρ').
 
   Definition fuel_must_not_incr {M: FairModel} oρ (a b: LiveState M) :=
-    ∀ ρ', ρ' ∈ live_roles _ a -> Some ρ' ≠ oρ -> oleq ((ls_fuel b) !! ρ') ((ls_fuel a) !! ρ').
+    ∀ ρ', ρ' ∈ dom a.(ls_fuel) -> Some ρ' ≠ oρ ->
+          (oleq ((ls_fuel b) !! ρ') ((ls_fuel a) !! ρ')
+                ∨ (ρ' ∉ dom b.(ls_fuel) ∧ ρ' ∉ M.(live_roles) a.(ls_under))).
 
   Definition ls_trans {M} (a: LiveState M) ℓ (b: LiveState M): Prop :=
     match ℓ with
@@ -183,11 +190,12 @@ Section fairness.
       ∧ fuel_decr (Some tid) (Some ρ) a b
       ∧ fuel_must_not_incr (Some ρ) a b
       ∧ (ρ ∈ live_roles _ b -> oleq (b.(ls_fuel) !! ρ) (Some (fuel_limit b)))
-      ∧ ∀ ρ, ρ ∈ M.(live_roles) b ∖ M.(live_roles) a -> oleq (b.(ls_fuel) !! ρ) (Some (fuel_limit b))
+      ∧ ∀ ρ, ρ ∈ dom b.(ls_fuel) ∖ dom a.(ls_fuel) -> oleq (b.(ls_fuel) !! ρ) (Some (fuel_limit b))
     | Silent_step tid =>
       (∃ ρ, a.(ls_mapping) !! ρ = Some tid) ∧
       fuel_decr (Some tid) None a b
       ∧ fuel_must_not_incr None a b
+      ∧ dom b.(ls_fuel) ⊆ dom a.(ls_fuel)
       ∧ a.(ls_under) = b.(ls_under)
     | Config_step =>
       M.(fmtrans) a None b
@@ -210,8 +218,8 @@ Section fairness.
        ls_fuel := gset_to_gmap (fuel_limit s0) (M.(live_roles) s0);
        ls_mapping := gset_to_gmap ζ0 (M.(live_roles) s0);
     |}.
-  Next Obligation. eauto using dom_gset_to_gmap. Qed.
-  Next Obligation. eauto using dom_gset_to_gmap. Qed.
+  Next Obligation. intros ???. apply reflexive_eq. rewrite dom_gset_to_gmap //. Qed.
+  Next Obligation. intros ???. apply reflexive_eq. rewrite !dom_gset_to_gmap //. Qed.
 
   Definition labels_match {M} (oζ : olocale Λ) (ℓ : @FairLabel (M.(fmrole))) :=
     match oζ, ℓ with
@@ -646,6 +654,11 @@ Section lex_ind.
 
 End lex_ind.
 
+Ltac SS :=
+  epose proof ls_fuel_dom;
+  (* epose proof ls_mapping_dom; *)
+  set_solver.
+
 Section fairness_preserved.
   Context {M: FairModel}.
   Context {Λ: language}.
@@ -705,11 +718,11 @@ Section fairness_preserved.
   Lemma mapping_live_role (δ: LiveState M) ρ:
     ρ ∈ M.(live_roles) δ ->
     is_Some (ls_mapping (Λ := Λ) δ !! ρ).
-  Proof. rewrite -elem_of_dom. rewrite (δ.(ls_mapping_dom)). done. Qed.
+  Proof. rewrite -elem_of_dom ls_same_doms. SS. Qed.
   Lemma fuel_live_role (δ: LiveState M) ρ:
     ρ ∈ M.(live_roles) δ ->
     is_Some (ls_fuel (Λ := Λ) δ !! ρ).
-  Proof. rewrite -elem_of_dom. rewrite (δ.(ls_fuel_dom)). done. Qed.
+  Proof. rewrite -elem_of_dom. SS. Qed.
 
   Local Hint Resolve mapping_live_role: core.
   Local Hint Resolve fuel_live_role: core.
@@ -814,7 +827,7 @@ Section fairness_preserved.
         unfold fuel_decr in Hlsdec.
         have Hmustdec: must_decrease ρ None δ (trfirst auxtr') (Some ζ).
         { constructor; eauto. }
-        specialize (Hlsdec ρ Hρlive Hmustdec).
+        specialize (Hlsdec ρ ltac:(SS) Hmustdec).
         eapply case1 =>//; last by eauto using infinite_cons.
       + (* Three cases:
            (1) ρ' = ρ and we are done
@@ -829,7 +842,7 @@ Section fairness_preserved.
         have Hmustdec: must_decrease ρ (Some ρ') δ (trfirst auxtr') (Some ζ).
         { constructor; eauto; congruence. }
         (* Copy and paste begins here *)
-        specialize (Hdec ρ Hρlive Hmustdec).
+        specialize (Hdec ρ ltac:(SS) Hmustdec).
         eapply case1 =>//; last by eauto using infinite_cons.
     - (* Another thread is taking a step. *)
       destruct (decide (ρ ∈ live_roles M (trfirst auxtr'))) as [Hρlive'|]; last first.
@@ -841,23 +854,29 @@ Section fairness_preserved.
           - inversion Htm as [|s1 ℓ1 r1 s2 ℓ2 r2 Hl Hs Hts Hls Hmatchrest]; simplify_eq.
             simpl in *. destruct ℓ; try done. destruct Hls as [_ [_ [Hnoninc _]]].
             have HnotNone: Some ρ ≠ None by congruence.
-            specialize (Hnoninc ρ Hρlive HnotNone).
+            specialize (Hnoninc ρ ltac:(SS) HnotNone).
             unfold oleq in Hnoninc. rewrite Hfuel in Hnoninc.
-            destruct (ls_fuel (trfirst auxtr') !! ρ) as [f'|] eqn:Heq; [by eexists|done].
+            destruct (ls_fuel (trfirst auxtr') !! ρ) as [f'|] eqn:Heq; [|set_solver].
+            eexists; split =>//. destruct Hnoninc as [Hnoninc|Hnoninc]=>//.
+            apply elem_of_dom_2 in Heq. set_solver.
           - inversion Htm as [|s1 ℓ1 r1 s2 ℓ2 r2 Hl Hs Hts Hls Hmatchrest]; simplify_eq.
             simpl in *. destruct ℓ as [ρ0 ζ0| ζ0|]; try done.
             + destruct Hls as (?&?&?&Hnoninc&?).
               unfold fuel_must_not_incr in Hnoninc.
               have Hneq: Some ρ ≠ Some ρ0 by congruence.
-              specialize (Hnoninc ρ Hρlive Hneq).
+              specialize (Hnoninc ρ ltac:(SS) Hneq).
               unfold oleq in Hnoninc. rewrite Hfuel in Hnoninc.
-              destruct (ls_fuel (trfirst auxtr') !! ρ) as [f'|] eqn:Heq; [by eexists|done].
+              destruct (ls_fuel (trfirst auxtr') !! ρ) as [f'|] eqn:Heq; [|set_solver].
+              eexists; split =>//. destruct Hnoninc as [Hnoninc|Hnoninc]=>//.
+              apply elem_of_dom_2 in Heq. set_solver.
             + destruct Hls as (?&?&Hnoninc&?).
               unfold fuel_must_not_incr in Hnoninc.
               have Hneq: Some ρ ≠ None by congruence.
-              specialize (Hnoninc ρ Hρlive Hneq).
+              specialize (Hnoninc ρ ltac:(SS) Hneq).
               unfold oleq in Hnoninc. rewrite Hfuel in Hnoninc.
-              destruct (ls_fuel (trfirst auxtr') !! ρ) as [f'|] eqn:Heq; [by eexists|done]. }
+              destruct (ls_fuel (trfirst auxtr') !! ρ) as [f'|] eqn:Heq; [|set_solver].
+              eexists; split =>//. destruct Hnoninc as [Hnoninc|Hnoninc]=>//.
+              apply elem_of_dom_2 in Heq. set_solver. }
 
         unfold fair_ex in *.
         have Hζ'en: pred_at extr' 0 (λ (c : cfg Λ) _, locale_enabled ζ c).
@@ -879,7 +898,7 @@ Section fairness_preserved.
             unfold fuel_decr in Hdec.
             have Hmd: must_decrease ρ None δ (trfirst auxtr') None.
             { econstructor. congruence. rewrite Hζ''. eauto. }
-            specialize (Hdec ρ Hρlive Hmd).
+            specialize (Hdec ρ ltac:(SS) Hmd).
             unfold oleq in Hdec. rewrite Hfuel in Hdec.
             destruct (ls_fuel (trfirst auxtr') !! ρ) as [f'|] eqn:Heq; [by eexists|done].
           - inversion Htm as [|s1 ℓ1 r1 s2 ℓ2 r2 Hl Hs Hts Hls Hmatchrest]; simplify_eq.
@@ -888,14 +907,14 @@ Section fairness_preserved.
               unfold fuel_decr in Hdec. simplify_eq.
               have Hmd: must_decrease ρ (Some ρ0) δ (trfirst auxtr') (Some ζ0).
               { econstructor 2. congruence. rewrite Hζ''; eauto. }
-              specialize (Hdec ρ Hρlive Hmd).
+              specialize (Hdec ρ ltac:(SS) Hmd).
               unfold oleq in Hdec. rewrite Hfuel in Hdec.
               destruct (ls_fuel (trfirst auxtr') !! ρ) as [f'|] eqn:Heq; [by eexists|done].
             + destruct Hls as (?&Hdec&_).
               unfold fuel_decr in Hdec. simplify_eq.
               have Hmd: must_decrease ρ None δ (trfirst auxtr') (Some ζ0).
               { econstructor 2. congruence. rewrite Hζ''; eauto. }
-              specialize (Hdec ρ Hρlive Hmd).
+              specialize (Hdec ρ ltac:(SS) Hmd).
               unfold oleq in Hdec. rewrite Hfuel in Hdec.
               destruct (ls_fuel (trfirst auxtr') !! ρ) as [f'|] eqn:Heq; [by eexists|done]. }
 
@@ -1083,22 +1102,27 @@ Section fuel_dec_unless.
     inversion Hval as [|c tid extr' ?? ? Hlm Hsteps Hstep Htrans Hmatch]; simplify_eq =>//.
     destruct ℓ as [| tid' |];
       [left; eexists; done| right |destruct tid; by [| exfalso; eapply Hcl]].
-    destruct Htrans as (Hne&Hdec&Hni&Heq). rewrite -> Heq in *. split; last done.
+    destruct Htrans as (Hne&Hdec&Hni&Hincl&Heq). rewrite -> Heq in *. split; last done.
     destruct tid as [tid|]; last done.
     rewrite <- Hlm in *. destruct Hne as [ρ Hρtid].
     have Hless: oless (ls_fuel (trfirst auxtr') !! ρ) (ls_fuel δ !! ρ).
-    { apply Hdec; last by econstructor.
-      rewrite -ls_mapping_dom. by eapply elem_of_dom_2. }
+    { apply Hdec; last by econstructor. apply elem_of_dom_2 in Hρtid.
+      rewrite -ls_same_doms //. }
     unfold oless in Hless.
     destruct (ls_fuel (trfirst auxtr')!!ρ) as [f2|] eqn:Hf2;
       destruct (ls_fuel δ!!ρ) as [f1|] eqn:Hf1 =>//.
     rewrite /Ψ (big_opM_delete (λ _ f, f) (ls_fuel (trfirst _)) ρ) //.
     rewrite (big_opM_delete (λ _ f, f) (ls_fuel  δ) ρ) //.
-    apply Nat.add_lt_le_mono =>//. apply big_addM_leq_forall => ρ' Hρ'.
+    apply Nat.add_lt_le_mono =>//.
+    apply big_addM_leq_forall => ρ' Hρ'.
     rewrite dom_delete_L in Hρ'.
     have Hρneqρ' : ρ ≠ ρ' by set_solver.
-    rewrite !lookup_delete_ne //. apply Hni => //.
-    rewrite Heq. rewrite -ls_fuel_dom. set_solver.
+    rewrite !lookup_delete_ne //.
+    destruct (decide (ρ' ∈ dom δ.(ls_fuel))) as [Hin|Hnotin].
+    - specialize (Hni ρ' ltac:(by apply elem_of_dom_2 in Hf1) ltac:(done)).
+      destruct Hni as [Hni|Hni]; first done.
+      set_solver.
+    - set_solver.
   Qed.
 End fuel_dec_unless.
 

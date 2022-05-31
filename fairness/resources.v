@@ -738,27 +738,29 @@ Section model_state_lemmas.
     { rewrite -dom_empty_iff_L. set_solver. }
     { set_solver. }
     iModIntro.
-    assert (Hfueldom: dom (fuel_apply fs (ls_fuel (trace_last auxtr))
-                                      ((dom (ls_fuel (trace_last auxtr)) ∪ dom fs) ∖ (dom fs ∖ dom fs))) =
-                      live_roles Mdl (trace_last auxtr)).
-    { unfold fuel_apply.
-      assert (dom fs ⊆ live_roles Mdl (trace_last auxtr)).
-      { intros ρ Hin. rewrite -ls_fuel_dom elem_of_dom Hfuel; last set_solver.
+    assert (Hsamedoms: dom (ls_mapping (trace_last auxtr)) =
+      dom (fuel_apply fs (ls_fuel (trace_last auxtr))
+                                      ((dom (ls_fuel (trace_last auxtr)) ∪ dom fs) ∖ (dom fs ∖ dom fs)))).
+    { rewrite ls_same_doms. unfold fuel_apply.
+      assert (dom fs ⊆ dom (trace_last auxtr).(ls_fuel)).
+      { intros ρ Hin. rewrite elem_of_dom Hfuel; last set_solver.
         apply elem_of_dom in Hin as [? Hin]. rewrite lookup_fmap Hin //=. }
-      rewrite (ls_fuel_dom (trace_last auxtr)) map_imap_dom_eq.
-      + rewrite dom_gset_to_gmap. set_solver.
-      + intros ρ _ Hin. rewrite dom_gset_to_gmap in Hin.
+      rewrite map_imap_dom_eq; last first.
+      { intros ρ _ Hin. rewrite dom_gset_to_gmap in Hin.
         destruct (decide (ρ ∈ dom fs)) as [Hin'|_].
         * by apply elem_of_dom.
-        * apply elem_of_dom. rewrite ls_fuel_dom. set_solver. }
-    assert (Hmappingdom: dom (ls_mapping (trace_last auxtr)) = live_roles _ (trace_last auxtr)).
-    { apply ls_mapping_dom. }
+        * apply elem_of_dom. set_solver. }
+      rewrite dom_gset_to_gmap. set_solver. }
+    assert (Hfueldom: live_roles _ (trace_last auxtr) ⊆
+      dom (fuel_apply fs (ls_fuel (trace_last auxtr))
+                                      ((dom (ls_fuel (trace_last auxtr)) ∪ dom fs) ∖ (dom fs ∖ dom fs)))).
+    { rewrite -Hsamedoms ls_same_doms. by apply ls_fuel_dom. }
     iExists {|
       ls_under := (trace_last auxtr).(ls_under);
       ls_fuel := _;
       ls_fuel_dom := Hfueldom;
       ls_mapping := (trace_last auxtr).(ls_mapping);
-      ls_mapping_dom := Hmappingdom;
+      ls_same_doms := Hsamedoms;
     |}.
     iExists (Silent_step ζ). simpl.
     iSplit; last first.
@@ -769,7 +771,7 @@ Section model_state_lemmas.
       apply Hlocssmall.
       destruct (trace_last extr).
       have ? := locales_of_list_step_incl _ _ _ _ _ Hstep. simpl.
-      clear Hfueldom Hmappingdom. set_solver. }
+      clear Hfueldom Hsamedoms. set_solver. }
     iSplit =>//. iSplit; first done. iSplit; last first.
     { iPureIntro.
       unfold tids_smaller; simpl. intros ρ ζ0 Hsome.
@@ -791,17 +793,19 @@ Section model_state_lemmas.
       + have: ρ' ∉ dom (S <$> fs).
         { apply not_elem_of_dom. rewrite lookup_fmap //. }
         set_solver. }
-    iPureIntro. split=>//. intros ρ' Hin _.
-    rewrite map_lookup_imap. rewrite -ls_fuel_dom in Hin.
-    apply elem_of_dom in Hin as [f Hf]. rewrite Hf /=.
-    destruct (decide (ρ' ∈ dom fs)).
-    + rewrite lookup_gset_to_gmap option_guard_True /=; last by set_solver.
-      rewrite -Hf Hfuel; last set_solver. rewrite lookup_fmap.
-      destruct (fs!!ρ') as [f'|] eqn:Heq'; first (simpl; lia).
-      rewrite Hfuel in Hf; last set_solver. rewrite lookup_fmap Heq' // in Hf.
-    + assert (ρ' ∈ dom (ls_fuel (trace_last auxtr))).
-      { apply elem_of_dom. eexists _; done. }
-      rewrite lookup_gset_to_gmap option_guard_True /=; [lia | set_solver].
+    iPureIntro. split; [|split; [|done]].
+    - intros ρ' Hin _. left.
+      rewrite map_lookup_imap.
+      apply elem_of_dom in Hin as [f Hf]. rewrite Hf /=.
+      destruct (decide (ρ' ∈ dom fs)).
+      + rewrite lookup_gset_to_gmap option_guard_True /=; last by set_solver.
+        rewrite -Hf Hfuel; last set_solver. rewrite lookup_fmap.
+        destruct (fs!!ρ') as [f'|] eqn:Heq'; first (simpl; lia).
+        rewrite Hfuel in Hf; last set_solver. rewrite lookup_fmap Heq' // in Hf.
+      + assert (ρ' ∈ dom (ls_fuel (trace_last auxtr))).
+        { apply elem_of_dom. eexists _; done. }
+        rewrite lookup_gset_to_gmap option_guard_True /=; [lia | set_solver].
+    - rewrite -Hsamedoms. eapply reflexive_eq, ls_same_doms.
   Qed.
 
   Lemma update_fork_split R1 R2 tp1 tp2 fs (extr : execution_trace Λ)
